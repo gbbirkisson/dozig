@@ -1,4 +1,7 @@
 .savegame
+.zig-cache
 build
+zig-out
+
 doom1.wad
 dozig

@@ -40,3 +40,9 @@ $(OBJDIR)/%.o:	%.c
 
 print:
 	@echo OBJS: $(OBJS)
+
+# ... zig ...
+
+.PHONY: run
+run:
+	zig build --release=small run

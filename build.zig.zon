@@ -1,0 +1,12 @@
+.{
+    .name = .dozig,
+    .version = "0.0.0",
+    .fingerprint = 0xf75a0856b9f8e7b0,
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "doom",
+    },
+}
