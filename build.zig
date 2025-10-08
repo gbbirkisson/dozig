@@ -1,5 +1,24 @@
 const std = @import("std");
 
+pub fn lib(
+    b: *std.Build,
+    target: *const std.Build.ResolvedTarget,
+    optimize: *const std.builtin.OptimizeMode,
+    name: []const u8,
+    path: []const u8,
+) *std.Build.Step.Compile {
+    const mod = b.addModule(name, .{
+        .root_source_file = b.path(path),
+        .target = target.*,
+        .optimize = optimize.*,
+        .link_libc = true,
+    });
+    return b.addLibrary(.{
+        .name = name,
+        .root_module = mod,
+    });
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -97,13 +116,14 @@ pub fn build(b: *std.Build) void {
             "w_main.c",
             "w_wad.c",
             "wi_stuff.c",
-            "z_zone.c",
+            // "z_zone.c",
         },
         .flags = &[_][]const u8{
             "-DFEATURE_SOUND",
         },
     });
 
+    mod.linkLibrary(lib(b, &target, &optimize, "z_zone", "src/z_zone.zig"));
     // mod.linkSystemLibrary("SDL2", .{});
     mod.linkSystemLibrary("SDL2_mixer", .{});
 
