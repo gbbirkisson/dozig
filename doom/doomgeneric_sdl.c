@@ -197,6 +197,7 @@ void DG_SetWindowTitle(const char * title)
   }
 }
 
+#ifndef USE_ZIG_MAIN
 int main(int argc, char **argv)
 {
     doomgeneric_Create(argc, argv);
@@ -205,7 +206,8 @@ int main(int argc, char **argv)
     {
         doomgeneric_Tick();
     }
-    
+
 
     return 0;
 }
+#endif

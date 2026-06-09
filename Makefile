@@ -22,7 +22,7 @@ OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
 all:	 $(OUTPUT)
 
 clean:
-	rm -r $(OBJDIR)
+	rm -r $(OBJDIR) $(OUTPUT)
 
 $(OUTPUT):	$(OBJS)
 	@echo [Linking $@]
@@ -40,9 +40,3 @@ $(OBJDIR)/%.o:	%.c
 
 print:
 	@echo OBJS: $(OBJS)
-
-# ... zig ...
-
-.PHONY: run
-run:
-	zig build --release=small run
