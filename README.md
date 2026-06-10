@@ -6,20 +6,19 @@ educational tool for myself.
 This is a fork from [doomgeneric](https://github.com/ozkl/doomgeneric) that focuses on porting
 DOOM to Zig for learning.
 
-## Requirements
-
-```
-$ sudo apt install libsdl2-mixer-dev
-```
-
 ## Run
 
 ```bash
-# Original C version
+# Compile/Run original C version with clang
+$ sudo apt install libsdl2-mixer-dev
 $ make dozig
 $ ./dozig
 
-# Zig version
+# Compile/Run original C version with zig
+$ sudo apt install libsdl2-mixer-dev
+$ zig build -Doriginal run
+
+# Compile/Run zig version
 $ zig build run
 ```
 
