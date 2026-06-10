@@ -3,7 +3,16 @@
     .version = "0.0.0",
     .fingerprint = 0xf75a0856b9f8e7b0,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .sdl = .{
+            .url = "git+https://github.com/castholm/SDL.git#018241066ffdae90d8b11f8bdc6242202f0f5451",
+            .hash = "sdl-0.5.1+3.4.10-SDL--kbMpgGMXke11Ujh5HUPKch7G_SUAS12LI0QFoqj",
+        },
+        .translate_c = .{
+            .url = "git+https://codeberg.org/ziglang/translate-c#7a1a9fdc4ab00835748a6657ecbb835e3d5d45f7",
+            .hash = "translate_c-0.0.0-Q_BUWvP1BgCjAk6PWv5286tOlvzD9-X-NkuTzh0KxY0Q",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

@@ -1,36 +1,32 @@
 const std = @import("std");
+const translate_c = @import("translate_c");
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Build original C doom or new version
+    // Build original C doom or zig version
     const original = b.option(
         bool,
         "original",
         "Build the original C Doom (no Zig)",
     ) orelse false;
 
-    // Create module wrapping the original doom C implementation
-    const doom_c = b.addTranslateC(.{
-        .root_source_file = b.path("doom/doomgeneric.h"),
-        .target = target,
-        .optimize = optimize,
-    });
+    // Render resolution
+    const resx = b.option(u32, "resx", "Horizontal resolution") orelse 1280;
+    const resy = b.option(u32, "resy", "Vertical resolution") orelse 800;
+    if (resx == 0 or resx % 320 != 0 or resy % 200 != 0 or resx / 320 != resy / 200) {
+        std.debug.print(
+            \\error: invalid -Dresx={d} -Dresy={d}
+            \\  Resolution must be an integer multiple of Doom's native 320x200
+            \\  (same factor on both axes): 320x200, 640x400, 960x600, 1280x800, ...
+            \\
+        , .{ resx, resy });
+        std.process.exit(1);
+    }
 
     // Create doom_zig module
-    const doom_zig = if (!original)
-        // Use new zig module
-        b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .sanitize_c = .off,
-            .imports = &.{
-                .{ .name = "doom_c", .module = doom_c.createModule() },
-            },
-        })
-    else
+    const doom_zig = if (original)
         // Use the original C code
         b.createModule(.{
             .root_source_file = null,
@@ -38,6 +34,14 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .sanitize_c = .off,
             .link_libc = true,
+        })
+    else
+        // Use new zig module
+        b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_c = .off,
         });
 
     // Setup source files and compile flags
@@ -55,7 +59,6 @@ pub fn build(b: *std.Build) !void {
         "d_net.c",
         "doomdef.c",
         "doomgeneric.c",
-        "doomgeneric_sdl.c",
         "doomstat.c",
         "dstrings.c",
         "dummy.c",
@@ -64,7 +67,6 @@ pub fn build(b: *std.Build) !void {
         "g_game.c",
         "hu_lib.c",
         "hu_stuff.c",
-        "i_cdmus.c",
         "i_endoom.c",
         "i_input.c",
         "i_joystick.c",
@@ -84,7 +86,6 @@ pub fn build(b: *std.Build) !void {
         "m_misc.c",
         "m_random.c",
         "memio.c",
-        "mus2mid.c",
         "p_ceilng.c",
         "p_doors.c",
         "p_enemy.c",
@@ -131,29 +132,62 @@ pub fn build(b: *std.Build) !void {
 
     if (original) {
         try doom_c_src.appendSlice(b.allocator, &.{
+            "doomgeneric_sdl.c",
+            "i_cdmus.c",
             "i_sdlmusic.c",
             "i_sdlsound.c",
+            "mus2mid.c",
         });
-        try doom_c_flags.appendSlice(b.allocator, &.{
-            "-DFEATURE_SOUND",
-            // "-DDOOMGENERIC_RESX=1280",
-            // "-DDOOMGENERIC_RESY=800",
-        });
-    } else {
-        try doom_c_flags.append(b.allocator, "-DUSE_ZIG_MAIN");
+        try doom_c_flags.append(b.allocator, "-DFEATURE_SOUND");
     }
 
-    // TODO: Remove this from the (non-original) zig build one happy day
-    {
-        // Inject C source files into the project
-        doom_zig.addCSourceFiles(.{
-            .root = b.path("doom"),
-            .files = doom_c_src.items,
-            .flags = doom_c_flags.items,
-        });
+    // Resolution defines for the C engine
+    try doom_c_flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESX={d}", .{resx}));
+    try doom_c_flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESY={d}", .{resy}));
 
-        // Link libraries
+    // Inject C source files into the project
+    doom_zig.addCSourceFiles(.{
+        .root = b.path("doom"),
+        .files = doom_c_src.items,
+        .flags = doom_c_flags.items,
+    });
+
+    if (original) {
+        // The original C backend uses SDL2 (+mixer for sound).
         doom_zig.linkSystemLibrary("SDL2_mixer", .{});
+    } else {
+        const sdl_dep = b.dependency("sdl", .{
+            .target = target,
+            // Build SDL optimized regardless of our mode: in Debug it is
+            // compiled with UBSan, which references __ubsan_handle_* symbols we
+            // don't link a runtime for. We never debug into SDL itself.
+            .optimize = .ReleaseFast,
+            .preferred_linkage = .static,
+        });
+        const sdl_lib = sdl_dep.artifact("SDL3");
+        doom_zig.linkLibrary(sdl_lib);
+
+        // Translate SDL3's headers into a Zig module imported as `c`.
+        const translate_c_dep = b.dependency("translate_c", .{});
+        const translator: translate_c.Translator = .init(translate_c_dep, .{
+            .c_source_file = b.addWriteFiles().add("c.h",
+                \\#define SDL_DISABLE_OLD_NAMES
+                \\#include <SDL3/SDL.h>
+                \\#include <SDL3/SDL_revision.h>
+                \\#define SDL_MAIN_HANDLED
+                \\#include <SDL3/SDL_main.h>
+            ),
+            .target = target,
+            .optimize = optimize,
+        });
+        translator.linkLibrary(sdl_lib);
+        doom_zig.addImport("c", translator.mod);
+
+        // Expose the same resolution to the Zig backend.
+        const options = b.addOptions();
+        options.addOption(u32, "resx", resx);
+        options.addOption(u32, "resy", resy);
+        doom_zig.addImport("config", options.createModule());
     }
 
     // Create executable
