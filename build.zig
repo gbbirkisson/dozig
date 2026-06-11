@@ -227,6 +227,26 @@ pub fn build(b: *std.Build) !void {
         });
         doom_zig.addImport("doomkeys", doomkeys_translator.mod);
 
+        // TinySoundFont (music synth): API translated for Zig, implementation
+        // compiled as C. tsf.h pulls libc headers, so web needs the sysroot.
+        const tsf_translator: translate_c.Translator = .init(translate_c_dep, .{
+            .c_source_file = b.path("vendor/tsf.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        if (web) tsf_translator.addSystemIncludePath(system_include_path.?);
+        doom_zig.addImport("tsf", tsf_translator.mod);
+        doom_zig.addCSourceFile(.{ .file = b.path("vendor/tsf.c") });
+
+        // Embed the GM soundfont as a Zig module; sdl_music.zig loads it
+        // with tsf_load_memory. One mechanism for native and wasm.
+        const sf_files = b.addWriteFiles();
+        _ = sf_files.addCopyFile(b.path("vendor/TimGM6mb.sf2"), "soundfont.sf2");
+        const sf_root = sf_files.add("soundfont.zig",
+            \\pub const data = @embedFile("soundfont.sf2");
+        );
+        doom_zig.addAnonymousImport("soundfont", .{ .root_source_file = sf_root });
+
         // Expose the same resolution to the Zig backend.
         const options = b.addOptions();
         options.addOption(u32, "DOOMGENERIC_RESX", resx);
@@ -282,6 +302,13 @@ pub fn build(b: *std.Build) !void {
         // Doom needs more than emcc's 16MB default memory (zone heap, framebuffers, sound
         // cache).
         run_emcc.addArg("-sALLOW_MEMORY_GROWTH");
+
+        // Asyncify lets SDL_Delay yield to the browser event loop (SDL calls emscripten_sleep
+        // when asyncify is linked in). Without it, blocking engine loops — the ~1s screen-melt
+        // wipe runs inside a single doomgeneric_Tick — starve the main-thread-serviced audio
+        // ScriptProcessorNode, and browsers repeat the last audio buffer (audible as the old
+        // song stuttering on level/song changes).
+        run_emcc.addArg("-sASYNCIFY");
 
         // Ship the IWAD inside the page. The engine searches the working directory for IWADs
         // (FILES_DIR "." in d_iwad.c), which is "/" in Emscripten's in-memory filesystem.

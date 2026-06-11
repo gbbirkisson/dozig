@@ -1,0 +1,8 @@
+TimGM6mb.sf2 — compact General MIDI soundfont by Tim Brechbill.
+Obtained from the Debian timgm6mb-soundfont package source mirror
+(https://github.com/deepin-community/timgm6mb-soundfont), which packages the
+soundfont as distributed with MuseScore 1.3.
+License: GNU GPL v2, with an exception permitting use of the sounds in
+compositions/recordings without restriction (as distributed by MuseScore).
+Vendored unmodified; used by dozig as the embedded GM bank for music
+playback (see docs/superpowers/specs/2026-06-11-music-tinysoundfont-design.md).
