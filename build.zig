@@ -35,6 +35,11 @@ pub fn build(b: *std.Build) !void {
     // Render resolution
     const resx = b.option(u32, "resx", "Horizontal resolution") orelse 1280;
     const resy = b.option(u32, "resy", "Vertical resolution") orelse 800;
+
+    // Mouse sensitivity baseline: raw SDL pixel deltas read far lower than
+    // the DOS mouse counts the engine's math expects. The in-game slider
+    // adjusts around this (x0.5 .. x1.4).
+    const mouse_scale = b.option(f32, "mouse_scale", "Mouse sensitivity scale factor") orelse 3.5;
     if (resx == 0 or resx % 320 != 0 or resy % 200 != 0 or resx / 320 != resy / 200) {
         std.debug.print(
             \\error: invalid -Dresx={d} -Dresy={d}
@@ -251,6 +256,7 @@ pub fn build(b: *std.Build) !void {
         const options = b.addOptions();
         options.addOption(u32, "DOOMGENERIC_RESX", resx);
         options.addOption(u32, "DOOMGENERIC_RESY", resy);
+        options.addOption(f32, "DOZIG_MOUSE_SCALE", mouse_scale);
         doom_zig.addImport("config", options.createModule());
     }
 

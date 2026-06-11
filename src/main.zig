@@ -4,7 +4,8 @@ const config = @import("config");
 const doom = @import("doom.zig");
 
 // Our SDL wrappers
-const convertToDoomKey = @import("sdl_input.zig").convertToDoomKey;
+const sdl_input = @import("sdl_input.zig");
+const convertToDoomKey = sdl_input.convertToDoomKey;
 const runApp = @import("sdl.zig").runApp;
 const errify = @import("sdl.zig").errify;
 
@@ -76,6 +77,7 @@ fn dgInit() !void {
         RESX,
         RESY,
     ));
+    sdl_input.initMouse(window);
 }
 
 export fn DG_DrawFrame() void {
@@ -121,10 +123,14 @@ export fn DG_SetWindowTitle(title: [*c]const u8) void {
 fn sdlAppInit(argv: [][*:0]u8) !sdl.SDL_AppResult {
     // Runs DG_Init (window/renderer/texture) + D_DoomMain (loads WAD, frame 1).
     doom.doomgeneric_Create(@intCast(argv.len), @ptrCast(argv.ptr));
+    // After M_LoadDefaults (inside doomgeneric_Create) so user config wins.
+    sdl_input.bindMouseButtons();
     return sdl.SDL_APP_CONTINUE;
 }
 
 fn sdlAppIterate() !sdl.SDL_AppResult {
+    sdl_input.updateMouseGrab(window);
+    sdl_input.postMouseEvent();
     doom.doomgeneric_Tick();
     return sdl.SDL_APP_CONTINUE;
 }
@@ -134,6 +140,11 @@ fn sdlAppEvent(event: *sdl.SDL_Event) !sdl.SDL_AppResult {
         sdl.SDL_EVENT_QUIT => return sdl.SDL_APP_SUCCESS,
         sdl.SDL_EVENT_KEY_DOWN => addKeyToQueue(true, event.key.key),
         sdl.SDL_EVENT_KEY_UP => addKeyToQueue(false, event.key.key),
+        sdl.SDL_EVENT_MOUSE_MOTION,
+        sdl.SDL_EVENT_MOUSE_BUTTON_DOWN,
+        sdl.SDL_EVENT_MOUSE_BUTTON_UP,
+        sdl.SDL_EVENT_MOUSE_WHEEL,
+        => sdl_input.handleMouseEvent(event),
         else => {},
     }
     return sdl.SDL_APP_CONTINUE;

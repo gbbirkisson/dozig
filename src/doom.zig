@@ -1,7 +1,25 @@
-//! Hand-declared C interop for the Doom engine: the doomgeneric entry points
-//! (doom/doomgeneric.h), the sound module interface (doom/i_sound.h) and the WAD lump API
-//! (doom/w_wad.h). These mirror a decade-stable ABI; field order and sizes must match the C
-//! headers exactly.
+//! Hand-declared C interop for the Doom engine: the event queue (doom/d_event.h), the
+//! doomgeneric entry points (doom/doomgeneric.h), engine state (doom/doomstat.h), the sound
+//! module interface (doom/i_sound.h) and the WAD lump API (doom/w_wad.h). These mirror a
+//! decade-stable ABI; field order and sizes must match the C headers exactly.
+
+// doom/d_event.h — engine event queue (Zig -> C).
+pub const ev_keydown: c_int = 0;
+pub const ev_keyup: c_int = 1;
+pub const ev_mouse: c_int = 2;
+
+/// doom/d_event.h event_t. data1-3 depend on type; for ev_mouse:
+/// data1 = button bitfield (bit 0 left, bit 1 right, bit 2 middle),
+/// data2 = X movement (positive turns right), data3 = Y movement.
+pub const Event = extern struct {
+    type: c_int,
+    data1: c_int = 0,
+    data2: c_int = 0,
+    data3: c_int = 0,
+    data4: c_int = 0,
+};
+
+pub extern fn D_PostEvent(ev: *Event) void;
 
 // doom/doomgeneric.h — engine entry points (Zig -> C).
 pub extern fn doomgeneric_Create(argc: c_int, argv: [*c][*c]u8) void;
@@ -12,6 +30,15 @@ pub extern var DG_ScreenBuffer: [*c]u32;
 
 // doom/doomkeys.h translated directly (see build.zig)
 pub const keys = @import("doomkeys");
+
+// doom/doomstat.h — engine state read for mouse-grab decisions (Zig -> C).
+/// gamestate_t: GS_LEVEL = 0 (in a level; the only value we test).
+pub const GS_LEVEL: c_int = 0;
+
+pub extern var gamestate: c_int;
+pub extern var menuactive: boolean;
+pub extern var paused: boolean;
+pub extern var demoplayback: boolean;
 
 /// doom/doomtype.h: typedef int boolean (via enum {false, true}).
 pub const boolean = c_int;
@@ -74,6 +101,13 @@ pub const MusicModule = extern struct {
     MusicIsPlaying: *const fn () callconv(.c) boolean,
     Poll: ?*const fn () callconv(.c) void,
 };
+
+// doom/m_controls.h — input bindings (Zig -> C). Mouse button indices;
+// -1 = unbound.
+pub extern var mousebstrafe: c_int;
+pub extern var mousebuse: c_int;
+pub extern var mousebprevweapon: c_int;
+pub extern var mousebnextweapon: c_int;
 
 // doom/w_wad.h — WAD lump access (Zig -> C).
 pub extern fn W_GetNumForName(name: [*:0]const u8) c_int;
