@@ -1,40 +1,37 @@
 const std = @import("std");
-const c = @import("c");
-const sdl = @import("sdl.zig");
-const sdl_input = @import("sdl_input.zig");
+const sdl = @import("sdl");
 const config = @import("config");
+const doom = @import("doom.zig");
 
-// ---------------------------------------------------------------------------
-// doomgeneric C engine symbols we call INTO (Zig -> C).
-// Hand-declared instead of translate-c; only four things are needed.
-// ---------------------------------------------------------------------------
-extern fn doomgeneric_Create(argc: c_int, argv: [*c][*c]u8) void;
-extern fn doomgeneric_Tick() void;
-extern var DG_ScreenBuffer: [*c]u32; // pixel_t* (uint32_t*), filled by the engine
+// Our SDL wrappers
+const convertToDoomKey = @import("sdl_input.zig").convertToDoomKey;
+const runApp = @import("sdl.zig").runApp;
+const errify = @import("sdl.zig").errify;
 
-const RESX: c_int = @intCast(config.resx);
-const RESY: c_int = @intCast(config.resy);
+// Force-link the audio modules
+comptime {
+    _ = @import("sdl_sound.zig");
+    _ = @import("sdl_music.zig");
+}
 
-// ---------------------------------------------------------------------------
-// SDL state + input ring buffer (single-threaded: all SDL callbacks and the
-// DG_* functions run on the main thread).
-// ---------------------------------------------------------------------------
-var window: ?*c.SDL_Window = null;
-var renderer: ?*c.SDL_Renderer = null;
-var texture: ?*c.SDL_Texture = null;
+// Screen dimensjons
+const RESX: c_int = @intCast(config.DOOMGENERIC_RESX);
+const RESY: c_int = @intCast(config.DOOMGENERIC_RESY);
 
+// SDL state
+var window: ?*sdl.SDL_Window = null;
+var renderer: ?*sdl.SDL_Renderer = null;
+var texture: ?*sdl.SDL_Texture = null;
+
+// Input ring-buffer
 const KEYQUEUE_SIZE = 16;
 var s_KeyQueue: [KEYQUEUE_SIZE]u16 = [_]u16{0} ** KEYQUEUE_SIZE;
 var s_KeyQueueWriteIndex: usize = 0;
 var s_KeyQueueReadIndex: usize = 0;
 
-const errify = sdl.errify;
-
-// ---------------------------------------------------------------------------
 // Input translation
-// ---------------------------------------------------------------------------
-fn addKeyToQueue(pressed: bool, keycode: c.SDL_Keycode) void {
-    const key = sdl_input.convertToDoomKey(keycode);
+fn addKeyToQueue(pressed: bool, keycode: sdl.SDL_Keycode) void {
+    const key = convertToDoomKey(keycode);
     const key_data: u16 = (@as(u16, @intFromBool(pressed)) << 8) | key;
     s_KeyQueue[s_KeyQueueWriteIndex] = key_data;
     s_KeyQueueWriteIndex = (s_KeyQueueWriteIndex + 1) % KEYQUEUE_SIZE;
@@ -43,21 +40,22 @@ fn addKeyToQueue(pressed: bool, keycode: c.SDL_Keycode) void {
 // ---------------------------------------------------------------------------
 // The 6 DG_* platform functions the engine calls INTO (C -> Zig).
 // ---------------------------------------------------------------------------
+
 export fn DG_Init() void {
     dgInit() catch {
-        std.log.err("DG_Init failed: {s}", .{c.SDL_GetError()});
+        std.log.err("DG_Init failed: {s}", .{sdl.SDL_GetError()});
         std.process.exit(1);
     };
 }
 
 fn dgInit() !void {
-    try errify(c.SDL_Init(c.SDL_INIT_VIDEO));
-    window = try errify(c.SDL_CreateWindow("DOOM", RESX, RESY, 0));
-    renderer = try errify(c.SDL_CreateRenderer(window, null));
-    texture = try errify(c.SDL_CreateTexture(
+    try errify(sdl.SDL_Init(sdl.SDL_INIT_VIDEO));
+    window = try errify(sdl.SDL_CreateWindow("DOOM", RESX, RESY, 0));
+    renderer = try errify(sdl.SDL_CreateRenderer(window, null));
+    texture = try errify(sdl.SDL_CreateTexture(
         renderer,
-        c.SDL_PIXELFORMAT_XRGB8888,
-        c.SDL_TEXTUREACCESS_STREAMING,
+        sdl.SDL_PIXELFORMAT_XRGB8888,
+        sdl.SDL_TEXTUREACCESS_STREAMING,
         RESX,
         RESY,
     ));
@@ -65,23 +63,23 @@ fn dgInit() !void {
 
 export fn DG_DrawFrame() void {
     dgDrawFrame() catch {
-        std.log.err("DG_DrawFrame failed: {s}", .{c.SDL_GetError()});
+        std.log.err("DG_DrawFrame failed: {s}", .{sdl.SDL_GetError()});
     };
 }
 
 fn dgDrawFrame() !void {
-    try errify(c.SDL_UpdateTexture(texture, null, @ptrCast(DG_ScreenBuffer), RESX * @as(c_int, @sizeOf(u32))));
-    try errify(c.SDL_RenderClear(renderer));
-    try errify(c.SDL_RenderTexture(renderer, texture, null, null));
-    try errify(c.SDL_RenderPresent(renderer));
+    try errify(sdl.SDL_UpdateTexture(texture, null, @ptrCast(doom.DG_ScreenBuffer), RESX * @as(c_int, @sizeOf(u32))));
+    try errify(sdl.SDL_RenderClear(renderer));
+    try errify(sdl.SDL_RenderTexture(renderer, texture, null, null));
+    try errify(sdl.SDL_RenderPresent(renderer));
 }
 
 export fn DG_SleepMs(ms: u32) void {
-    c.SDL_Delay(ms);
+    sdl.SDL_Delay(ms);
 }
 
 export fn DG_GetTicksMs() u32 {
-    return @truncate(c.SDL_GetTicks());
+    return @truncate(sdl.SDL_GetTicks());
 }
 
 export fn DG_GetKey(pressed: [*c]c_int, doom_key: [*c]u8) c_int {
@@ -95,46 +93,44 @@ export fn DG_GetKey(pressed: [*c]c_int, doom_key: [*c]u8) c_int {
 
 export fn DG_SetWindowTitle(title: [*c]const u8) void {
     if (window) |w| {
-        _ = c.SDL_SetWindowTitle(w, title);
+        _ = sdl.SDL_SetWindowTitle(w, title);
     }
 }
 
 // ---------------------------------------------------------------------------
 // SDL3 app callbacks (drive the doomgeneric loop).
 // ---------------------------------------------------------------------------
-fn sdlAppInit(argv: [][*:0]u8) !c.SDL_AppResult {
+
+fn sdlAppInit(argv: [][*:0]u8) !sdl.SDL_AppResult {
     // Runs DG_Init (window/renderer/texture) + D_DoomMain (loads WAD, frame 1).
-    doomgeneric_Create(@intCast(argv.len), @ptrCast(argv.ptr));
-    return c.SDL_APP_CONTINUE;
+    doom.doomgeneric_Create(@intCast(argv.len), @ptrCast(argv.ptr));
+    return sdl.SDL_APP_CONTINUE;
 }
 
-fn sdlAppIterate() !c.SDL_AppResult {
-    doomgeneric_Tick();
-    return c.SDL_APP_CONTINUE;
+fn sdlAppIterate() !sdl.SDL_AppResult {
+    doom.doomgeneric_Tick();
+    return sdl.SDL_APP_CONTINUE;
 }
 
-fn sdlAppEvent(event: *c.SDL_Event) !c.SDL_AppResult {
+fn sdlAppEvent(event: *sdl.SDL_Event) !sdl.SDL_AppResult {
     switch (event.type) {
-        c.SDL_EVENT_QUIT => return c.SDL_APP_SUCCESS,
-        c.SDL_EVENT_KEY_DOWN => addKeyToQueue(true, event.key.key),
-        c.SDL_EVENT_KEY_UP => addKeyToQueue(false, event.key.key),
+        sdl.SDL_EVENT_QUIT => return sdl.SDL_APP_SUCCESS,
+        sdl.SDL_EVENT_KEY_DOWN => addKeyToQueue(true, event.key.key),
+        sdl.SDL_EVENT_KEY_UP => addKeyToQueue(false, event.key.key),
         else => {},
     }
-    return c.SDL_APP_CONTINUE;
+    return sdl.SDL_APP_CONTINUE;
 }
 
 fn sdlAppQuit() void {
-    if (texture) |t| c.SDL_DestroyTexture(t);
-    if (renderer) |r| c.SDL_DestroyRenderer(r);
-    if (window) |w| c.SDL_DestroyWindow(w);
+    if (texture) |t| sdl.SDL_DestroyTexture(t);
+    if (renderer) |r| sdl.SDL_DestroyRenderer(r);
+    if (window) |w| sdl.SDL_DestroyWindow(w);
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
 pub fn main(init: std.process.Init.Minimal) void {
     // Pass the real argv so Doom sees -iwad / -warp / etc.
-    sdl.runApp(init.args.vector, sdlAppInit, sdlAppIterate, sdlAppEvent, sdlAppQuit) catch |err| {
+    runApp(init.args.vector, sdlAppInit, sdlAppIterate, sdlAppEvent, sdlAppQuit) catch |err| {
         std.log.err("app error: {s}", .{@errorName(err)});
         std.process.exit(1);
     };

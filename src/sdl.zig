@@ -5,7 +5,7 @@
 //! Error plumbing (ErrorStore, errify) ported from castholm/zig-examples/breakout (MIT).
 
 const std = @import("std");
-const c = @import("c");
+const sdl = @import("sdl");
 
 var app_err: ErrorStore = .{};
 
@@ -16,26 +16,26 @@ const ErrorStore = struct {
     const status_storing = 1;
     const status_stored = 2;
 
-    status: c.SDL_AtomicInt = .{ .value = status_not_stored },
+    status: sdl.SDL_AtomicInt = .{ .value = status_not_stored },
     err: anyerror = undefined,
     trace_index: usize = undefined,
     trace_addrs: [32]usize = undefined,
 
-    fn store(es: *ErrorStore, err: anyerror) c.SDL_AppResult {
-        if (c.SDL_CompareAndSwapAtomicInt(&es.status, status_not_stored, status_storing)) {
+    fn store(es: *ErrorStore, err: anyerror) sdl.SDL_AppResult {
+        if (sdl.SDL_CompareAndSwapAtomicInt(&es.status, status_not_stored, status_storing)) {
             es.err = err;
             if (@errorReturnTrace()) |src_trace| {
                 es.trace_index = src_trace.index;
                 const len = @min(es.trace_addrs.len, src_trace.instruction_addresses.len);
                 @memcpy(es.trace_addrs[0..len], src_trace.instruction_addresses[0..len]);
             }
-            _ = c.SDL_SetAtomicInt(&es.status, status_stored);
+            _ = sdl.SDL_SetAtomicInt(&es.status, status_stored);
         }
-        return c.SDL_APP_FAILURE;
+        return sdl.SDL_APP_FAILURE;
     }
 
     fn load(es: *ErrorStore) ?anyerror {
-        if (c.SDL_GetAtomicInt(&es.status) != status_stored) return null;
+        if (sdl.SDL_GetAtomicInt(&es.status) != status_stored) return null;
         if (@errorReturnTrace()) |dst_trace| {
             dst_trace.index = es.trace_index;
             const len = @min(dst_trace.instruction_addresses.len, es.trace_addrs.len);
@@ -82,28 +82,28 @@ pub fn runApp(
     comptime appQuit: anytype,
 ) !void {
     const shims = struct {
-        fn initC(appstate: ?*?*anyopaque, argc: c_int, a: ?[*:null]?[*:0]u8) callconv(.c) c.SDL_AppResult {
+        fn initC(appstate: ?*?*anyopaque, argc: c_int, a: ?[*:null]?[*:0]u8) callconv(.c) sdl.SDL_AppResult {
             _ = appstate;
             return appInit(@as([][*:0]u8, @ptrCast(a.?[0..@intCast(argc)]))) catch |err| app_err.store(err);
         }
-        fn iterateC(appstate: ?*anyopaque) callconv(.c) c.SDL_AppResult {
+        fn iterateC(appstate: ?*anyopaque) callconv(.c) sdl.SDL_AppResult {
             _ = appstate;
             return appIterate() catch |err| app_err.store(err);
         }
-        fn eventC(appstate: ?*anyopaque, event: ?*c.SDL_Event) callconv(.c) c.SDL_AppResult {
+        fn eventC(appstate: ?*anyopaque, event: ?*sdl.SDL_Event) callconv(.c) sdl.SDL_AppResult {
             _ = appstate;
             return appEvent(event.?) catch |err| app_err.store(err);
         }
-        fn quitC(appstate: ?*anyopaque, result: c.SDL_AppResult) callconv(.c) void {
+        fn quitC(appstate: ?*anyopaque, result: sdl.SDL_AppResult) callconv(.c) void {
             _ = appstate;
             _ = result;
             appQuit();
         }
         fn mainC(argc: c_int, a: ?[*:null]?[*:0]u8) callconv(.c) c_int {
-            return c.SDL_EnterAppMainCallbacks(argc, @ptrCast(a), initC, iterateC, eventC, quitC);
+            return sdl.SDL_EnterAppMainCallbacks(argc, @ptrCast(a), initC, iterateC, eventC, quitC);
         }
     };
 
-    _ = c.SDL_RunApp(@intCast(argv.len), @ptrCast(@constCast(argv.ptr)), shims.mainC, null);
+    _ = sdl.SDL_RunApp(@intCast(argv.len), @ptrCast(@constCast(argv.ptr)), shims.mainC, null);
     if (app_err.load()) |err| return err;
 }

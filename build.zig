@@ -48,6 +48,7 @@ pub fn build(b: *std.Build) !void {
     var doom_c_src: std.ArrayList([]const u8) = .empty;
     var doom_c_flags: std.ArrayList([]const u8) = .empty;
 
+    // Bare nessecities
     try doom_c_src.appendSlice(b.allocator, &.{
         "am_map.c",
         "d_event.c",
@@ -131,6 +132,7 @@ pub fn build(b: *std.Build) !void {
     });
 
     if (original) {
+        // We need these to run the original C code
         try doom_c_src.appendSlice(b.allocator, &.{
             "doomgeneric_sdl.c",
             "i_cdmus.c",
@@ -138,8 +140,8 @@ pub fn build(b: *std.Build) !void {
             "i_sdlsound.c",
             "mus2mid.c",
         });
-        try doom_c_flags.append(b.allocator, "-DFEATURE_SOUND");
     }
+    try doom_c_flags.append(b.allocator, "-DFEATURE_SOUND");
 
     // Resolution defines for the C engine
     try doom_c_flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESX={d}", .{resx}));
@@ -156,6 +158,8 @@ pub fn build(b: *std.Build) !void {
         // The original C backend uses SDL2 (+mixer for sound).
         doom_zig.linkSystemLibrary("SDL2_mixer", .{});
     } else {
+        const translate_c_dep = b.dependency("translate_c", .{});
+
         const sdl_dep = b.dependency("sdl", .{
             .target = target,
             // Build SDL optimized regardless of our mode: in Debug it is
@@ -168,8 +172,7 @@ pub fn build(b: *std.Build) !void {
         doom_zig.linkLibrary(sdl_lib);
 
         // Translate SDL3's headers into a Zig module imported as `c`.
-        const translate_c_dep = b.dependency("translate_c", .{});
-        const translator: translate_c.Translator = .init(translate_c_dep, .{
+        const sdl_translator: translate_c.Translator = .init(translate_c_dep, .{
             .c_source_file = b.addWriteFiles().add("c.h",
                 \\#define SDL_DISABLE_OLD_NAMES
                 \\#include <SDL3/SDL.h>
@@ -180,13 +183,21 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         });
-        translator.linkLibrary(sdl_lib);
-        doom_zig.addImport("c", translator.mod);
+        sdl_translator.linkLibrary(sdl_lib);
+        doom_zig.addImport("sdl", sdl_translator.mod);
+
+        // Translate doomkeys.h (pure macros, no includes) into a `doomkeys`
+        const doomkeys_translator: translate_c.Translator = .init(translate_c_dep, .{
+            .c_source_file = b.path("doom/doomkeys.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        doom_zig.addImport("doomkeys", doomkeys_translator.mod);
 
         // Expose the same resolution to the Zig backend.
         const options = b.addOptions();
-        options.addOption(u32, "resx", resx);
-        options.addOption(u32, "resy", resy);
+        options.addOption(u32, "DOOMGENERIC_RESX", resx);
+        options.addOption(u32, "DOOMGENERIC_RESY", resy);
         doom_zig.addImport("config", options.createModule());
     }
 
