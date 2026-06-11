@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const sdl = @import("sdl");
 const config = @import("config");
 const doom = @import("doom.zig");
@@ -68,8 +69,17 @@ export fn DG_Init() void {
 
 fn dgInit() !void {
     try errify(sdl.SDL_Init(sdl.SDL_INIT_VIDEO));
-    window = try errify(sdl.SDL_CreateWindow("DOOM", RESX, RESY, 0));
+    // -Dfullscreen: borderless fullscreen-desktop, native only (the wasm
+    // "window" is the canvas; browser fullscreen is a different mechanism).
+    const fullscreen = comptime config.DOZIG_FULLSCREEN and builtin.os.tag != .emscripten;
+    const flags: sdl.SDL_WindowFlags = if (fullscreen) sdl.SDL_WINDOW_FULLSCREEN else 0;
+    window = try errify(sdl.SDL_CreateWindow("DOOM", RESX, RESY, flags));
     renderer = try errify(sdl.SDL_CreateRenderer(window, null));
+    if (fullscreen) {
+        // Keep the game's 16:10 geometry on any display: scale to fit with
+        // black bars; the texture keeps rendering to a logical RESXxRESY.
+        try errify(sdl.SDL_SetRenderLogicalPresentation(renderer, RESX, RESY, sdl.SDL_LOGICAL_PRESENTATION_LETTERBOX));
+    }
     texture = try errify(sdl.SDL_CreateTexture(
         renderer,
         sdl.SDL_PIXELFORMAT_XRGB8888,
