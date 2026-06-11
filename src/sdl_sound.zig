@@ -161,9 +161,6 @@ fn sfxInit(prefix: doom.boolean) callconv(.c) doom.boolean {
 }
 
 fn init() !void {
-    // The pulse backend deadlocks under the zig build; prefer pipewire. The SDL_AUDIO_DRIVER
-    // env var still overrides hints set at normal priority.
-    _ = sdl.SDL_SetHint(sdl.SDL_HINT_AUDIO_DRIVER, "pipewire");
     try errify(sdl.SDL_InitSubSystem(sdl.SDL_INIT_AUDIO));
     errdefer sdl.SDL_QuitSubSystem(sdl.SDL_INIT_AUDIO);
     const spec: sdl.SDL_AudioSpec = .{ .format = sdl.SDL_AUDIO_F32, .channels = 2, .freq = SAMPLE_RATE };

@@ -14,6 +14,23 @@ comptime {
     _ = @import("sdl_music.zig");
 }
 
+// Route std.log through SDL. Besides integrating with SDL's logging (browser console on
+// Emscripten), this avoids std's default log handler, whose Io.Threaded implementation fails to
+// compile for wasm32-emscripten on Zig 0.16.0.
+pub const std_options: std.Options = .{ .logFn = sdlLog };
+
+fn sdlLog(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = scope;
+    var buf: [512]u8 = undefined;
+    const msg = std.fmt.bufPrintZ(&buf, comptime level.asText() ++ ": " ++ format, args) catch return;
+    sdl.SDL_Log("%s", msg.ptr);
+}
+
 // Screen dimensjons
 const RESX: c_int = @intCast(config.DOOMGENERIC_RESX);
 const RESY: c_int = @intCast(config.DOOMGENERIC_RESY);

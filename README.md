@@ -20,6 +20,10 @@ $ zig build -Doriginal run
 
 # Compile/Run zig version
 $ zig build run
+
+# Compile/Run wasm version
+$ embuilder build sysroot
+$ zig build run -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast "-Dsystem_include_path=$(em-config CACHE)/sysroot/include"
 ```
 
 ## Demos

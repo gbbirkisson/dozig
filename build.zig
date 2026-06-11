@@ -12,6 +12,26 @@ pub fn build(b: *std.Build) !void {
         "Build the original C Doom (no Zig)",
     ) orelse false;
 
+    // Emscripten/WebAssembly: zig compiles everything to a static library, emcc links it into
+    // html+js+wasm under zig-out/www
+    const web = target.result.os.tag == .emscripten;
+    if (original and web) {
+        std.debug.print("error: -Doriginal is not supported for the Emscripten target\n", .{});
+        std.process.exit(1);
+    }
+
+    // Emscripten's libc headers, required for cross-compiling C for the web:
+    // -Dsystem_include_path="$(em-config CACHE)/sysroot/include"
+    const system_include_path = b.option(
+        std.Build.LazyPath,
+        "system_include_path",
+        "System header search path for cross-compiling (Emscripten sysroot include dir)",
+    );
+    if (web and system_include_path == null) {
+        std.debug.print("error: '-Dsystem_include_path' is required when building for Emscripten\n", .{});
+        std.process.exit(1);
+    }
+
     // Render resolution
     const resx = b.option(u32, "resx", "Horizontal resolution") orelse 1280;
     const resy = b.option(u32, "resy", "Vertical resolution") orelse 800;
@@ -42,7 +62,10 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
             .sanitize_c = .off,
+            // Emscripten provides libc; the doom C files need its headers.
+            .link_libc = if (web) true else null,
         });
+    if (web) doom_zig.addSystemIncludePath(system_include_path.?);
 
     // Setup source files and compile flags
     var doom_c_src: std.ArrayList([]const u8) = .empty;
@@ -160,14 +183,23 @@ pub fn build(b: *std.Build) !void {
     } else {
         const translate_c_dep = b.dependency("translate_c", .{});
 
-        const sdl_dep = b.dependency("sdl", .{
-            .target = target,
-            // Build SDL optimized regardless of our mode: in Debug it is
-            // compiled with UBSan, which references __ubsan_handle_* symbols we
-            // don't link a runtime for. We never debug into SDL itself.
-            .optimize = .ReleaseFast,
-            .preferred_linkage = .static,
-        });
+        // Build SDL optimized regardless of our mode: in Debug it is compiled with UBSan, which
+        // references __ubsan_handle_* symbols we don't link a runtime for. We never debug into
+        // SDL itself.
+        const sdl_dep = if (web)
+            b.dependency("sdl", .{
+                .target = target,
+                .optimize = .ReleaseFast,
+                .preferred_linkage = .static,
+                // SDL's own C also needs the Emscripten sysroot headers.
+                .system_include_path = system_include_path.?,
+            })
+        else
+            b.dependency("sdl", .{
+                .target = target,
+                .optimize = .ReleaseFast,
+                .preferred_linkage = .static,
+            });
         const sdl_lib = sdl_dep.artifact("SDL3");
         doom_zig.linkLibrary(sdl_lib);
 
@@ -183,6 +215,7 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         });
+        if (web) sdl_translator.addSystemIncludePath(system_include_path.?);
         sdl_translator.linkLibrary(sdl_lib);
         doom_zig.addImport("sdl", sdl_translator.mod);
 
@@ -201,18 +234,94 @@ pub fn build(b: *std.Build) !void {
         doom_zig.addImport("config", options.createModule());
     }
 
-    // Create executable
-    const dozig = b.addExecutable(.{
-        .name = "dozig",
-        .root_module = doom_zig,
-    });
-    b.installArtifact(dozig);
-
-    const run_cmd = b.addRunArtifact(dozig);
-    run_cmd.step.dependOn(b.getInstallStep());
-    // Forward trailing args: `zig build run -- -playdemo demo1`, `-warp`, etc.
-    if (b.args) |args| run_cmd.addArgs(args);
-
     const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
+
+    if (web) {
+        // Zig cannot link Emscripten output itself: build a static library and let emcc do the
+        // final link into html+js+wasm.
+        const dozig_lib = b.addLibrary(.{
+            .linkage = .static,
+            .name = "dozig",
+            .root_module = doom_zig,
+        });
+
+        const run_emcc = b.addSystemCommand(&.{"emcc"});
+        run_emcc.setCwd(b.path("."));
+
+        // Pass 'dozig_lib' and any static libraries or object files it links with (SDL3) as
+        // input files.
+        for (dozig_lib.getCompileDependencies(false)) |artifact| {
+            if (artifact.isStaticLibrary() or artifact.kind == .obj) {
+                run_emcc.addArtifactArg(artifact);
+            }
+        }
+
+        run_emcc.addArgs(switch (optimize) {
+            .Debug => &.{
+                "-O0",
+                // Preserve DWARF debug information.
+                "-g",
+                // Use UBSan (full runtime).
+                "-fsanitize=undefined",
+            },
+            .ReleaseSafe => &.{
+                "-O3",
+                // Use UBSan (minimal runtime).
+                "-fsanitize=undefined",
+                "-fsanitize-minimal-runtime",
+            },
+            .ReleaseFast => &.{"-O3"},
+            .ReleaseSmall => &.{"-Oz"},
+        });
+        if (optimize != .Debug) {
+            // Perform link time optimization and minify the JavaScript.
+            run_emcc.addArg("-flto");
+            run_emcc.addArgs(&.{ "--closure", "1" });
+        }
+
+        // Doom needs more than emcc's 16MB default memory (zone heap, framebuffers, sound
+        // cache).
+        run_emcc.addArg("-sALLOW_MEMORY_GROWTH");
+
+        // Ship the IWAD inside the page. The engine searches the working directory for IWADs
+        // (FILES_DIR "." in d_iwad.c), which is "/" in Emscripten's in-memory filesystem.
+        run_emcc.addArgs(&.{ "--embed-file", "doom1.wad@/doom1.wad" });
+
+        // Patch the default HTML shell: route stderr to the console and disable ANSI escape
+        // sequences in engine output.
+        run_emcc.addArg("--pre-js");
+        run_emcc.addFileArg(b.addWriteFiles().add("pre.js",
+            \\Module['printErr'] ??= Module['print'];
+            \\Module['preRun'] = () => ENV['NO_COLOR'] = '1';
+        ));
+
+        run_emcc.addArg("-o");
+        const dozig_html = run_emcc.addOutputFileArg("dozig.html");
+
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = dozig_html.dirname(),
+            .install_dir = .{ .custom = "www" },
+            .install_subdir = "",
+        }).step);
+
+        // `zig build run` serves the page via emrun.
+        const emrun_cmd = b.addSystemCommand(&.{"emrun"});
+        emrun_cmd.addArg(b.getInstallPath(.{ .custom = "www" }, "dozig.html"));
+        emrun_cmd.step.dependOn(b.getInstallStep());
+        run_step.dependOn(&emrun_cmd.step);
+    } else {
+        // Create executable
+        const dozig = b.addExecutable(.{
+            .name = "dozig",
+            .root_module = doom_zig,
+        });
+        b.installArtifact(dozig);
+
+        const run_cmd = b.addRunArtifact(dozig);
+        run_cmd.step.dependOn(b.getInstallStep());
+        // Forward trailing args: `zig build run -- -playdemo demo1`, `-warp`, etc.
+        if (b.args) |args| run_cmd.addArgs(args);
+
+        run_step.dependOn(&run_cmd.step);
+    }
 }
