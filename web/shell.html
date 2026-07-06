@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>DOZIG</title>
+    <!-- Inline favicon (dark-red square) so nothing is fetched from the network. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Crect width='16' height='16' fill='%23900'/%3E%3C/svg%3E"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0a0a0a;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      /* The canvas must have no border or padding or mouse coordinates go wrong.
+         max-* shrinks it to fit small screens while preserving aspect ratio
+         (a canvas has intrinsic dimensions, so the browser scales it evenly). */
+      #canvas {
+        display: block;
+        background: #000;
+        max-width: 100vw;
+        max-height: 100vh;
+        image-rendering: pixelated; /* keep Doom's pixels crisp when scaled */
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+    <script>
+      // Glue for the Emscripten module (runs before the loader script below).
+      // Replaces the old build.zig --pre-js blob.
+      var Module = {
+        canvas: document.getElementById("canvas"),
+        print: function () {
+          // There is no terminal here to interpret the ANSI color (SGR) escapes
+          // the engine emits, so strip them before logging. This supersedes the
+          // old NO_COLOR=1 env hack, which had to run inside the module's scope.
+          var text = Array.prototype.join.call(arguments, " ");
+          console.log(text.replace(/\x1b\[[0-9;]*m/g, ""));
+        },
+      };
+      // Route stderr to the same place as stdout (the console).
+      Module.printErr = Module.print;
+    </script>
+
+    {{{ SCRIPT }}}
+  </body>
+</html>

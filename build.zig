@@ -333,13 +333,12 @@ pub fn build(b: *std.Build) !void {
         // (FILES_DIR "." in d_iwad.c), which is "/" in Emscripten's in-memory filesystem.
         run_emcc.addArgs(&.{ "--embed-file", "doom1.wad@/doom1.wad" });
 
-        // Patch the default HTML shell: route stderr to the console and disable ANSI escape
-        // sequences in engine output.
-        run_emcc.addArg("--pre-js");
-        run_emcc.addFileArg(b.addWriteFiles().add("pre.js",
-            \\Module['printErr'] ??= Module['print'];
-            \\Module['preRun'] = () => ENV['NO_COLOR'] = '1';
-        ));
+        // Render into our own editable page (web/shell.html) instead of emcc's
+        // stock shell. emcc substitutes `{{{ SCRIPT }}}` in that file with the
+        // loader script. The page also carries the JS glue that used to live in
+        // a --pre-js blob (stdout/stderr -> console, ANSI stripping).
+        run_emcc.addArg("--shell-file");
+        run_emcc.addFileArg(b.path("web/shell.html"));
 
         run_emcc.addArg("-o");
         const dozig_html = run_emcc.addOutputFileArg("dozig.html");
