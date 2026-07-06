@@ -35,9 +35,9 @@ fn lumpName(sfx_in: *doom.SfxInfo, buf: []u8) ?[:0]const u8 {
     const sfx = sfx_in.link orelse sfx_in;
     const name = std.mem.sliceTo(&sfx.name, 0);
     return if (use_sfx_prefix)
-        std.fmt.bufPrintZ(buf, "ds{s}", .{name}) catch null
+        std.fmt.bufPrintSentinel(buf, "ds{s}", .{name}, 0) catch null
     else
-        std.fmt.bufPrintZ(buf, "{s}", .{name}) catch null;
+        std.fmt.bufPrintSentinel(buf, "{s}", .{name}, 0) catch null;
 }
 
 /// Convert DMX PCM (unsigned 8-bit mono @ rate) to f32 mono @ SAMPLE_RATE. SDL_AudioStream does
@@ -107,7 +107,7 @@ const Channel = struct {
     active: bool = false,
 };
 
-var channels = [_]Channel{.{}} ** NUM_CHANNELS;
+var channels: [NUM_CHANNELS]Channel = @splat(.{});
 var stream: ?*sdl.SDL_AudioStream = null;
 
 /// Audio-thread scratch buffer: 1024 stereo frames (~23ms @ 44.1kHz) per chunk, looping until

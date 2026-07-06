@@ -29,7 +29,7 @@ fn sdlLog(
 ) void {
     _ = scope;
     var buf: [512]u8 = undefined;
-    const msg = std.fmt.bufPrintZ(&buf, comptime level.asText() ++ ": " ++ format, args) catch return;
+    const msg = std.fmt.bufPrintSentinel(&buf, comptime level.asText() ++ ": " ++ format, args, 0) catch return;
     sdl.SDL_Log("%s", msg.ptr);
 }
 
@@ -44,7 +44,7 @@ var texture: ?*sdl.SDL_Texture = null;
 
 // Input ring-buffer
 const KEYQUEUE_SIZE = 16;
-var s_KeyQueue: [KEYQUEUE_SIZE]u16 = [_]u16{0} ** KEYQUEUE_SIZE;
+var s_KeyQueue: [KEYQUEUE_SIZE]u16 = @splat(0);
 var s_KeyQueueWriteIndex: usize = 0;
 var s_KeyQueueReadIndex: usize = 0;
 

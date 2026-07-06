@@ -39,7 +39,7 @@ pub const Sequencer = struct {
     pos: usize = 0,
     pending: usize = 0, // samples until the next event is due
     ended: bool = false,
-    last_vol: [16]u8 = [_]u8{100} ** 16,
+    last_vol: [16]u8 = @splat(100),
 
     pub fn init(score: []const u8, samples_per_tick: usize) Sequencer {
         return .{ .score = score, .samples_per_tick = samples_per_tick };

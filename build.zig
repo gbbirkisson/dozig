@@ -216,6 +216,14 @@ pub fn build(b: *std.Build) !void {
         const sdl_translator: translate_c.Translator = .init(translate_c_dep, .{
             .c_source_file = b.addWriteFiles().add("c.h",
                 \\#define SDL_DISABLE_OLD_NAMES
+                \\// Neutralize SDL's compile-time asserts before including its headers.
+                \\// SDL guards this macro with #ifndef, so our empty definition wins.
+                \\// One SDL assert is sizeof(((SDL_Event*)NULL)->padding); translate-c
+                \\// renders that null-pointer member access as @as([*c]SDL_Event, null).*
+                \\// which Zig 0.17 rejects at comptime (even inside @TypeOf). These are
+                \\// C-ABI sanity checks the real SDL library still verifies when it is
+                \\// compiled; our header translation only needs the declarations.
+                \\#define SDL_COMPILE_TIME_ASSERT(name, x)
                 \\#include <SDL3/SDL.h>
                 \\#include <SDL3/SDL_revision.h>
                 \\#define SDL_MAIN_HANDLED
@@ -342,10 +350,12 @@ pub fn build(b: *std.Build) !void {
             .install_subdir = "",
         }).step);
 
-        // `zig build run` serves the page via emrun.
+        // `zig build run` serves the page via emrun. Point it straight at the
+        // emcc output file (its directory holds the sibling .js/.wasm/.data);
+        // install paths are no longer resolvable to plain strings at configure
+        // time in the reworked build system, so we use the LazyPath directly.
         const emrun_cmd = b.addSystemCommand(&.{"emrun"});
-        emrun_cmd.addArg(b.getInstallPath(.{ .custom = "www" }, "dozig.html"));
-        emrun_cmd.step.dependOn(b.getInstallStep());
+        emrun_cmd.addFileArg(dozig_html);
         run_step.dependOn(&emrun_cmd.step);
     } else {
         // Create executable
@@ -358,7 +368,7 @@ pub fn build(b: *std.Build) !void {
         const run_cmd = b.addRunArtifact(dozig);
         run_cmd.step.dependOn(b.getInstallStep());
         // Forward trailing args: `zig build run -- -playdemo demo1`, `-warp`, etc.
-        if (b.args) |args| run_cmd.addArgs(args);
+        run_cmd.addPassthruArgs();
 
         run_step.dependOn(&run_cmd.step);
     }
