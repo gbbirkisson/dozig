@@ -18,7 +18,10 @@ $ ./dozig
 $ sudo apt install libsdl2-mixer-dev
 $ zig build -Doriginal run
 
-# Compile/Run zig version
+# Compile/Run old C engine wrapped with zig
+$ zig build -Dcengine run
+
+# Compile/Run ported zig version
 $ zig build run
 
 # Compile/Run wasm version

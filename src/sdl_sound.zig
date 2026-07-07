@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const sdl = @import("sdl");
-const doom = @import("doom.zig");
+const doom = @import("interop");
 
 const errify = @import("sdl.zig").errify;
 

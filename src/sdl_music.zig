@@ -6,7 +6,7 @@
 const std = @import("std");
 const sdl = @import("sdl");
 const tsf = @import("tsf");
-const doom = @import("doom.zig");
+const doom = @import("interop");
 const mus = @import("mus.zig");
 const soundfont = @import("soundfont");
 

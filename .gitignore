@@ -3,6 +3,7 @@
 build
 zig-out
 zig-pkg
+docs
 
 doom1.wad
 dozig

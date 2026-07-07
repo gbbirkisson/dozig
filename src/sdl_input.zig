@@ -4,7 +4,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const sdl = @import("sdl");
-const doom = @import("doom.zig");
+const doom = @import("interop");
 const config = @import("config");
 
 // ---------------------------------------------------------------------------

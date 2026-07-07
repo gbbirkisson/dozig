@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const sdl = @import("sdl");
 const config = @import("config");
-const doom = @import("doom.zig");
+const doom = @import("interop");
 
 // Our SDL wrappers
 const sdl_input = @import("sdl_input.zig");
@@ -10,10 +10,12 @@ const convertToDoomKey = sdl_input.convertToDoomKey;
 const runApp = @import("sdl.zig").runApp;
 const errify = @import("sdl.zig").errify;
 
-// Force-link the audio modules
+// Force-link the audio modules and any Zig engine ports (registry is generated
+// by build.zig; empty when nothing is ported).
 comptime {
     _ = @import("sdl_sound.zig");
     _ = @import("sdl_music.zig");
+    _ = @import("engine_registry");
 }
 
 // Route std.log through SDL. Besides integrating with SDL's logging (browser console on
