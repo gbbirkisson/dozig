@@ -31,8 +31,14 @@ $ zig build run -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast "-Dsystem_incl
 
 ## Demos
 
-```
+```bash
 # Run demos
 $ zig build run -- -playdemo demo1
 $ zig build run -- -timedemo demo1
+```
+
+## Test
+
+```bash
+$ zig build test
 ```

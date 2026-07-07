@@ -28,8 +28,9 @@ pub fn build(b: *std.Build) !void {
     // both halves of the swap: excluding <name>.c and linking src/engine/<name>.zig.
     // Empty for the C-only modes.
     const ported: []const []const u8 = if (original or cengine) &.{} else &.{
-        "m_random",
+        "f_wipe",
         "m_fixed",
+        "m_random",
         "tables",
     };
 
@@ -327,6 +328,7 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         });
+        var port_mods = std.StringHashMap(*std.Build.Module).init(b.allocator);
         for (ported) |name| {
             const port_mod = b.createModule(.{
                 .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{name})),
@@ -334,10 +336,19 @@ pub fn build(b: *std.Build) !void {
                 .optimize = optimize,
                 .sanitize_c = .off,
             });
-            // Available to ports that need them (m_random uses neither).
             port_mod.addImport("interop", interop_mod);
             port_mod.addImport("config", config_mod);
             registry_mod.addImport(b.fmt("engine_{s}", .{name}), port_mod);
+            try port_mods.put(name, port_mod);
+        }
+        // Port-to-port deps: a port that imports another port's Zig API.
+        const port_deps = [_]struct { consumer: []const u8, dep: []const u8 }{
+            .{ .consumer = "f_wipe", .dep = "m_random" },
+        };
+        for (port_deps) |pd| {
+            if (port_mods.get(pd.consumer)) |consumer_mod| {
+                if (port_mods.get(pd.dep)) |dep_mod| consumer_mod.addImport(pd.dep, dep_mod);
+            }
         }
         doom_zig.addImport("engine_registry", registry_mod);
     }
@@ -439,5 +450,30 @@ pub fn build(b: *std.Build) !void {
         run_cmd.addPassthruArgs();
 
         run_step.dependOn(&run_cmd.step);
+    }
+
+    // `zig build test` — unit tests for the Zig engine ports.
+    const test_step = b.step("test", "Run engine port unit tests");
+    const TestPort = struct { name: []const u8, deps: []const []const u8 };
+    const test_ports = [_]TestPort{
+        .{ .name = "f_wipe", .deps = &.{"m_random"} },
+        .{ .name = "m_fixed", .deps = &.{} },
+        .{ .name = "m_random", .deps = &.{} },
+        .{ .name = "tables", .deps = &.{} },
+    };
+    for (test_ports) |tp| {
+        const tmod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{tp.name})),
+            .target = target,
+            .optimize = optimize,
+        });
+        for (tp.deps) |dep| {
+            tmod.addImport(dep, b.createModule(.{
+                .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{dep})),
+                .target = target,
+                .optimize = optimize,
+            }));
+        }
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tmod })).step);
     }
 }

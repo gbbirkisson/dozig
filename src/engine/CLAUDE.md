@@ -64,9 +64,21 @@ Write each `src/engine/<name>.zig` in this order, top to bottom:
 
 - Prefer **bit-exact parity against vanilla** for anything demo-critical (sample
   the real Doom values, e.g. `finesine`); use **self-consistency** checks
-  (monotonicity, endpoints, ranges) where an exact match isn't required or
-  possible.
-- Run one file's tests with `zig test src/engine/<name>.zig`.
+  (monotonicity, endpoints, ranges) where an exact match isn't required or possible.
+- `zig build test` runs every port's tests. `zig test src/engine/<name>.zig` runs a
+  single file standalone — but only if it imports no other port module (those are
+  wired only by the `zig build test` step).
+- Keep the **testable core extern-free.** A port that calls the C engine (an
+  `extern`) can't be `zig test`'d standalone — the C symbols are undefined in a test
+  binary. Structure the logic so the tested functions take their buffers/inputs as
+  parameters (see `f_wipe.tick`), and guard the C-ABI bridge with
+  `comptime { if (!builtin.is_test) @export(...); }` so the test binary links without
+  the C engine.
+- **Caveat on the `zig build test` step:** it currently wires only a port's *explicit*
+  `port_deps` (one level deep), not `interop`/`config`. The first tested port that
+  imports `interop`/`config`, or has a transitive port dep, will pass `zig build` but
+  fail `zig build test` — extend the test-step wiring in `../../build.zig` when that
+  happens.
 
 ## Only `.c` files are swapped — headers stay
 
@@ -77,14 +89,19 @@ header; the Zig port only supplies the *definitions* those declarations promise.
 If you port a C file that *uses* one of those macros, the Zig version needs its
 own copy — macros don't cross the C→Zig boundary, only linked symbols do.
 
-## Consuming a port from Zig (not wired yet)
+## Consuming another port from Zig
 
-Today only the C engine calls into a port, through the C-ABI bridge. The build
-gives each port module the `interop` and `config` imports, but nothing imports a
-*port* module — so a future Zig module (e.g. a ported `p_enemy` wanting to call
-`m_random.play()` directly) cannot yet `@import` another port. Wiring
-port-to-port Zig imports is a deliberate next step: add the target port to the
-consumer's import table in `../../build.zig` when the first such case appears.
+A port can call another port's idiomatic Zig API directly. Import it as a **named
+module** (`@import("m_random")`), never a relative file path
+(`@import("m_random.zig")`) — a relative import recompiles the other port *inside*
+this module and duplicates its exported C symbols (link error). The named module
+is wired in `../../build.zig` via the `port_deps` table: the port loop creates each
+port's module, then adds each declared `consumer → dep` import. `f_wipe` →
+`m_random` is the reference example.
+
+Gotcha: the `dep` must also be in the `ported` list, or the wiring silently skips
+it and you get a confusing "no module named …" compile error. When you add a
+`port_deps` entry, make sure both ends are ported.
 
 ## Building
 
