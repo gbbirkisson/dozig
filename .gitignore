@@ -1,9 +1,10 @@
 .savegame
 .zig-cache
 build
+docs
 zig-out
 zig-pkg
-docs
 
+compile_commands.json
 doom1.wad
 dozig

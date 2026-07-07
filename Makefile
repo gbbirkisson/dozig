@@ -40,3 +40,10 @@ $(OBJDIR)/%.o:	%.c
 
 print:
 	@echo OBJS: $(OBJS)
+
+# Regenerate compile_commands.json for clangd/LSP.
+.PHONY: cdb
+cdb:
+	$(RM) -r $(OBJDIR)
+	-bear -- $(MAKE) -k
+	@echo "Wrote compile_commands.json — run :LspRestart in your editor"
