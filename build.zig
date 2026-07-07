@@ -29,6 +29,8 @@ pub fn build(b: *std.Build) !void {
     // Empty for the C-only modes.
     const ported: []const []const u8 = if (original or cengine) &.{} else &.{
         "m_random",
+        "m_fixed",
+        "tables",
     };
 
     // Emscripten/WebAssembly: zig compiles everything to a static library, emcc links it into

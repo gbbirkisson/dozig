@@ -1,9 +1,17 @@
 //! Doom's two random-number generators (port of doom/m_random.c).
 //!
-//! Two layers (see src/engine/README.md):
-//!   1. Idiomatic Zig API (play/misc/clear) — what future Zig modules call.
-//!   2. C-ABI bridge (P_Random/M_Random/M_ClearRandom, rndindex) — temporary,
-//!      delegates to layer 1; delete once every caller is Zig.
+//! ELI5: Doom's "random" isn't really random — it's a fixed list of 256 numbers
+//! (rndtable, baked in 1993). A generator just walks the list one step at a time,
+//! wrapping back to the start at the end, and hands back the next number. Same
+//! list, same order, every run.
+//!
+//! There are TWO independent walkers, so cosmetic randomness never disturbs the
+//! game world:
+//!   play() (P_Random) - used by the simulation (monsters, damage, aim); must
+//!                       stay in lockstep so recorded demos replay identically.
+//!   misc() (M_Random) - looks only (menus, screen wipe, HUD, intermission).
+//! Keeping the two indices separate means a flickery menu can't shift the numbers
+//! the monsters get. clear() sends both back to the start (at demo/game start).
 
 const std = @import("std");
 
@@ -32,7 +40,7 @@ const rndtable = [256]u8{
 // prndindex has no external references -> private state.
 var prndindex: u8 = 0;
 
-// ----- Idiomatic Zig API (what future Zig modules call) -----
+// ----- Idiomatic Zig API -----
 
 /// Play-simulation RNG. Deterministic; drives demo/netgame sync.
 /// C engine equivalent: P_Random (doom/m_random.c).
@@ -56,7 +64,7 @@ pub fn clear() void {
     prndindex = 0;
 }
 
-// ----- C-ABI bridge (temporary; delete when all callers are Zig) -----
+// ----- C-ABI bridge -----
 
 // Read directly by the C engine (g_game.c consistency check; `extern int
 // rndindex` in doomstat.h). This is the live state `misc()` mutates — one
@@ -67,9 +75,11 @@ export var rndindex: c_int = 0;
 export fn P_Random() c_int {
     return play();
 }
+
 export fn M_Random() c_int {
     return misc();
 }
+
 export fn M_ClearRandom() void {
     clear();
 }
