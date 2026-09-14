@@ -230,7 +230,7 @@ pub fn build(b: *std.Build) !void {
         const sdl_dep = if (web)
             b.dependency("sdl", .{
                 .target = target,
-                .optimize = .ReleaseFast,
+                .optimize = .fast,
                 .preferred_linkage = .static,
                 // SDL's own C also needs the Emscripten sysroot headers.
                 .system_include_path = system_include_path.?,
@@ -238,7 +238,7 @@ pub fn build(b: *std.Build) !void {
         else
             b.dependency("sdl", .{
                 .target = target,
-                .optimize = .ReleaseFast,
+                .optimize = .fast,
                 .preferred_linkage = .static,
             });
         const sdl_lib = sdl_dep.artifact("SDL3");
@@ -376,23 +376,23 @@ pub fn build(b: *std.Build) !void {
         }
 
         run_emcc.addArgs(switch (optimize) {
-            .Debug => &.{
+            .debug => &.{
                 "-O0",
                 // Preserve DWARF debug information.
                 "-g",
                 // Use UBSan (full runtime).
                 "-fsanitize=undefined",
             },
-            .ReleaseSafe => &.{
+            .safe => &.{
                 "-O3",
                 // Use UBSan (minimal runtime).
                 "-fsanitize=undefined",
                 "-fsanitize-minimal-runtime",
             },
-            .ReleaseFast => &.{"-O3"},
-            .ReleaseSmall => &.{"-Oz"},
+            .fast => &.{"-O3"},
+            .small => &.{"-Oz"},
         });
-        if (optimize != .Debug) {
+        if (optimize != .debug) {
             // Perform link time optimization and minify the JavaScript.
             run_emcc.addArg("-flto");
             run_emcc.addArgs(&.{ "--closure", "1" });
