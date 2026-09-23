@@ -7,6 +7,7 @@
         .sdl = .{
             .url = "git+https://github.com/castholm/SDL.git#018241066ffdae90d8b11f8bdc6242202f0f5451",
             .hash = "sdl-0.5.1+3.4.10-SDL--kbMpgGMXke11Ujh5HUPKch7G_SUAS12LI0QFoqj",
+            .lazy = true,
         },
         .translate_c = .{
             .url = "git+https://codeberg.org/ziglang/translate-c#0944784e197e419433a21d4b28bfc65e48e7d514",
@@ -17,6 +18,8 @@
         "build.zig",
         "build.zig.zon",
         "doom",
+        "src",
+        "vendor",
         "web",
     },
 }

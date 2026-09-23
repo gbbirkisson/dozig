@@ -1,6 +1,194 @@
 const std = @import("std");
 const translate_c = @import("translate_c");
 
+// Doom C sources every build flavor compiles.
+const doom_c_src = [_][]const u8{
+    "am_map.c",
+    "d_event.c",
+    "d_items.c",
+    "d_iwad.c",
+    "d_loop.c",
+    "d_main.c",
+    "d_mode.c",
+    "d_net.c",
+    "doomdef.c",
+    "doomgeneric.c",
+    "doomstat.c",
+    "dstrings.c",
+    "dummy.c",
+    "f_finale.c",
+    "f_wipe.c",
+    "g_game.c",
+    "hu_lib.c",
+    "hu_stuff.c",
+    "i_endoom.c",
+    "i_input.c",
+    "i_joystick.c",
+    "i_scale.c",
+    "i_sound.c",
+    "i_system.c",
+    "i_timer.c",
+    "i_video.c",
+    "info.c",
+    "m_argv.c",
+    "m_bbox.c",
+    "m_cheat.c",
+    "m_config.c",
+    "m_controls.c",
+    "m_fixed.c",
+    "m_menu.c",
+    "m_misc.c",
+    "m_random.c",
+    "memio.c",
+    "p_ceilng.c",
+    "p_doors.c",
+    "p_enemy.c",
+    "p_floor.c",
+    "p_inter.c",
+    "p_lights.c",
+    "p_map.c",
+    "p_maputl.c",
+    "p_mobj.c",
+    "p_plats.c",
+    "p_pspr.c",
+    "p_saveg.c",
+    "p_setup.c",
+    "p_sight.c",
+    "p_spec.c",
+    "p_switch.c",
+    "p_telept.c",
+    "p_tick.c",
+    "p_user.c",
+    "r_bsp.c",
+    "r_data.c",
+    "r_draw.c",
+    "r_main.c",
+    "r_plane.c",
+    "r_segs.c",
+    "r_sky.c",
+    "r_things.c",
+    "s_sound.c",
+    "sha1.c",
+    "sounds.c",
+    "st_lib.c",
+    "st_stuff.c",
+    "statdump.c",
+    "tables.c",
+    "v_video.c",
+    "w_checksum.c",
+    "w_file.c",
+    "w_file_stdc.c",
+    "w_main.c",
+    "w_wad.c",
+    "wi_stuff.c",
+    "z_zone.c",
+};
+
+// We need these to run the original C code
+const original_c_src = [_][]const u8{
+    "doomgeneric_sdl.c",
+    "i_cdmus.c",
+    "i_sdlmusic.c",
+    "i_sdlsound.c",
+    "mus2mid.c",
+};
+
+const EngineOptions = struct {
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    resx: u32,
+    resy: u32,
+    ported: []const []const u8,
+};
+
+/// Adds the Doom C sources plus `extra` to `mod`. Drops any C module that has a Zig port (see
+/// `ported`) to avoid duplicate symbols with the Zig implementation.
+fn addEngineSources(b: *std.Build, mod: *std.Build.Module, opts: EngineOptions, extra: []const []const u8) !void {
+    var flags: std.ArrayList([]const u8) = .empty;
+    try flags.append(b.allocator, "-DFEATURE_SOUND");
+    // Resolution defines for the C engine
+    try flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESX={d}", .{opts.resx}));
+    try flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESY={d}", .{opts.resy}));
+
+    var files: std.ArrayList([]const u8) = .empty;
+    for ([_][]const []const u8{ &doom_c_src, extra }) |group| {
+        for (group) |file| {
+            const is_ported = for (opts.ported) |name| {
+                if (std.mem.eql(u8, file, b.fmt("{s}.c", .{name}))) break true;
+            } else false;
+            if (!is_ported) try files.append(b.allocator, file);
+        }
+    }
+
+    mod.addCSourceFiles(.{
+        .root = b.path("doom"),
+        .files = files.items,
+        .flags = flags.items,
+    });
+}
+
+/// interop.zig: shared C-ABI bindings. A standalone module so the backend and every Zig port
+/// import the SAME instance.
+fn createInterop(
+    b: *std.Build,
+    translate_c_dep: *std.Build.Dependency,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    // Translate doomkeys.h (pure macros, no includes) into a `doomkeys`
+    const doomkeys_translator: translate_c.Translator = .init(translate_c_dep, .{
+        .c_source_file = b.path("doom/doomkeys.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const interop_mod = b.createModule(.{
+        .root_source_file = b.path("src/interop.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    interop_mod.addImport("doomkeys", doomkeys_translator.mod);
+    return interop_mod;
+}
+
+/// Force-links each ported module's C-ABI exports into `mod`. The registry is always generated
+/// (empty body when nothing is ported) so the root can import it unconditionally, same
+/// `comptime { _ = @import(...) }` idiom the audio modules use.
+fn addPorts(b: *std.Build, mod: *std.Build.Module, interop_mod: *std.Build.Module, opts: EngineOptions) !void {
+    var registry_src: std.ArrayList(u8) = .empty;
+    try registry_src.appendSlice(b.allocator, "comptime {\n");
+    for (opts.ported) |name| {
+        try registry_src.appendSlice(b.allocator, b.fmt("    _ = @import(\"engine_{s}\");\n", .{name}));
+    }
+    try registry_src.appendSlice(b.allocator, "}\n");
+    const registry_mod = b.createModule(.{
+        .root_source_file = b.addWriteFiles().add("engine_registry.zig", registry_src.items),
+        .target = opts.target,
+        .optimize = opts.optimize,
+    });
+    var port_mods = std.StringHashMap(*std.Build.Module).init(b.allocator);
+    for (opts.ported) |name| {
+        const port_mod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{name})),
+            .target = opts.target,
+            .optimize = opts.optimize,
+            .sanitize_c = .off,
+        });
+        port_mod.addImport("interop", interop_mod);
+        registry_mod.addImport(b.fmt("engine_{s}", .{name}), port_mod);
+        try port_mods.put(name, port_mod);
+    }
+    // Port-to-port deps: a port that imports another port's Zig API.
+    const port_deps = [_]struct { consumer: []const u8, dep: []const u8 }{
+        .{ .consumer = "f_wipe", .dep = "m_random" },
+    };
+    for (port_deps) |pd| {
+        if (port_mods.get(pd.consumer)) |consumer_mod| {
+            if (port_mods.get(pd.dep)) |dep_mod| consumer_mod.addImport(pd.dep, dep_mod);
+        }
+    }
+    mod.addImport("engine_registry", registry_mod);
+}
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -24,6 +212,17 @@ pub fn build(b: *std.Build) !void {
         std.process.exit(1);
     }
 
+    // Build the headless terminal demo player (src/main_term.zig) instead of the SDL game.
+    const terminal = b.option(
+        bool,
+        "terminal",
+        "Build the terminal demo player instead of the SDL game",
+    ) orelse false;
+    if (terminal and original) {
+        std.debug.print("error: -Doriginal and -Dterminal are mutually exclusive\n", .{});
+        std.process.exit(1);
+    }
+
     // Game modules that have a Zig port in src/engine/. This one list drives
     // both halves of the swap: excluding <name>.c and linking src/engine/<name>.zig.
     // Empty for the C-only modes.
@@ -39,6 +238,10 @@ pub fn build(b: *std.Build) !void {
     const web = target.result.os.tag == .emscripten;
     if (original and web) {
         std.debug.print("error: -Doriginal is not supported for the Emscripten target\n", .{});
+        std.process.exit(1);
+    }
+    if (terminal and web) {
+        std.debug.print("error: -Dterminal is not supported for the Emscripten target\n", .{});
         std.process.exit(1);
     }
 
@@ -76,6 +279,89 @@ pub fn build(b: *std.Build) !void {
         std.process.exit(1);
     }
 
+    // `zig build test`: unit tests. Defined before any lazy
+    // dependency, whose `orelse return` would otherwise skip it.
+    const test_step = b.step("test", "Run engine port unit tests");
+    const TestPort = struct { name: []const u8, deps: []const []const u8 };
+    const test_ports = [_]TestPort{
+        .{ .name = "f_wipe", .deps = &.{"m_random"} },
+        .{ .name = "m_fixed", .deps = &.{} },
+        .{ .name = "m_random", .deps = &.{} },
+        .{ .name = "tables", .deps = &.{} },
+    };
+    for (test_ports) |tp| {
+        const tmod = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{tp.name})),
+            .target = target,
+            .optimize = optimize,
+        });
+        for (tp.deps) |dep| {
+            tmod.addImport(dep, b.createModule(.{
+                .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{dep})),
+                .target = target,
+                .optimize = optimize,
+            }));
+        }
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tmod })).step);
+    }
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/headless/ansi.zig"),
+        .target = target,
+        .optimize = optimize,
+    }) })).step);
+
+    const run_step = b.step("run", "Run the app");
+
+    // Headless engine package, imported by other projects as `dozig`: fixed 320x200, no SDL.
+    if (!original and !web) {
+        const headless_engine: EngineOptions = .{
+            .target = target,
+            .optimize = optimize,
+            .resx = 320,
+            .resy = 200,
+            .ported = ported,
+        };
+        const interop_mod = createInterop(b, b.dependency("translate_c", .{}), target, optimize);
+        const dozig_mod = b.addModule("dozig", .{
+            .root_source_file = b.path("src/headless/dozig.zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_c = .off,
+            .link_libc = true,
+        });
+        dozig_mod.addImport("interop", interop_mod);
+        try addEngineSources(b, dozig_mod, headless_engine, &.{});
+        try addPorts(b, dozig_mod, interop_mod, headless_engine);
+
+        // The SDL graph below is skipped entirely, so SDL is never fetched.
+        if (terminal) {
+            const term = b.addExecutable(.{
+                .name = "dozig",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("src/main_term.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
+            });
+            term.root_module.addImport("dozig", dozig_mod);
+            b.installArtifact(term);
+
+            const run_cmd = b.addRunArtifact(term);
+            run_cmd.step.dependOn(b.getInstallStep());
+            run_cmd.addPassthruArgs();
+            run_step.dependOn(&run_cmd.step);
+            return;
+        }
+    }
+
+    const sdl_engine: EngineOptions = .{
+        .target = target,
+        .optimize = optimize,
+        .resx = resx,
+        .resy = resy,
+        .ported = ported,
+    };
+
     // Create doom_zig module
     const doom_zig = if (original)
         // Use the original C code
@@ -98,125 +384,7 @@ pub fn build(b: *std.Build) !void {
         });
     if (web) doom_zig.addSystemIncludePath(system_include_path.?);
 
-    // Setup source files and compile flags
-    var doom_c_src: std.ArrayList([]const u8) = .empty;
-    var doom_c_flags: std.ArrayList([]const u8) = .empty;
-
-    // Bare nessecities
-    try doom_c_src.appendSlice(b.allocator, &.{
-        "am_map.c",
-        "d_event.c",
-        "d_items.c",
-        "d_iwad.c",
-        "d_loop.c",
-        "d_main.c",
-        "d_mode.c",
-        "d_net.c",
-        "doomdef.c",
-        "doomgeneric.c",
-        "doomstat.c",
-        "dstrings.c",
-        "dummy.c",
-        "f_finale.c",
-        "f_wipe.c",
-        "g_game.c",
-        "hu_lib.c",
-        "hu_stuff.c",
-        "i_endoom.c",
-        "i_input.c",
-        "i_joystick.c",
-        "i_scale.c",
-        "i_sound.c",
-        "i_system.c",
-        "i_timer.c",
-        "i_video.c",
-        "info.c",
-        "m_argv.c",
-        "m_bbox.c",
-        "m_cheat.c",
-        "m_config.c",
-        "m_controls.c",
-        "m_fixed.c",
-        "m_menu.c",
-        "m_misc.c",
-        "m_random.c",
-        "memio.c",
-        "p_ceilng.c",
-        "p_doors.c",
-        "p_enemy.c",
-        "p_floor.c",
-        "p_inter.c",
-        "p_lights.c",
-        "p_map.c",
-        "p_maputl.c",
-        "p_mobj.c",
-        "p_plats.c",
-        "p_pspr.c",
-        "p_saveg.c",
-        "p_setup.c",
-        "p_sight.c",
-        "p_spec.c",
-        "p_switch.c",
-        "p_telept.c",
-        "p_tick.c",
-        "p_user.c",
-        "r_bsp.c",
-        "r_data.c",
-        "r_draw.c",
-        "r_main.c",
-        "r_plane.c",
-        "r_segs.c",
-        "r_sky.c",
-        "r_things.c",
-        "s_sound.c",
-        "sha1.c",
-        "sounds.c",
-        "st_lib.c",
-        "st_stuff.c",
-        "statdump.c",
-        "tables.c",
-        "v_video.c",
-        "w_checksum.c",
-        "w_file.c",
-        "w_file_stdc.c",
-        "w_main.c",
-        "w_wad.c",
-        "wi_stuff.c",
-        "z_zone.c",
-    });
-
-    if (original) {
-        // We need these to run the original C code
-        try doom_c_src.appendSlice(b.allocator, &.{
-            "doomgeneric_sdl.c",
-            "i_cdmus.c",
-            "i_sdlmusic.c",
-            "i_sdlsound.c",
-            "mus2mid.c",
-        });
-    }
-    try doom_c_flags.append(b.allocator, "-DFEATURE_SOUND");
-
-    // Resolution defines for the C engine
-    try doom_c_flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESX={d}", .{resx}));
-    try doom_c_flags.append(b.allocator, b.fmt("-DDOOMGENERIC_RESY={d}", .{resy}));
-
-    // Drop any C module that has a Zig port (see `ported`) to avoid duplicate
-    // symbols with the Zig implementation.
-    var active_c_src: std.ArrayList([]const u8) = .empty;
-    for (doom_c_src.items) |file| {
-        const is_ported = for (ported) |name| {
-            if (std.mem.eql(u8, file, b.fmt("{s}.c", .{name}))) break true;
-        } else false;
-        if (!is_ported) try active_c_src.append(b.allocator, file);
-    }
-
-    // Inject C source files into the project
-    doom_zig.addCSourceFiles(.{
-        .root = b.path("doom"),
-        .files = active_c_src.items,
-        .flags = doom_c_flags.items,
-    });
+    try addEngineSources(b, doom_zig, sdl_engine, if (original) &original_c_src else &.{});
 
     if (original) {
         // The original C backend uses SDL2 (+mixer for sound).
@@ -227,8 +395,8 @@ pub fn build(b: *std.Build) !void {
         // Build SDL optimized regardless of our mode: in Debug it is compiled with UBSan, which
         // references __ubsan_handle_* symbols we don't link a runtime for. We never debug into
         // SDL itself.
-        const sdl_dep = if (web)
-            b.dependency("sdl", .{
+        const sdl_dep = (if (web)
+            b.lazyDependency("sdl", .{
                 .target = target,
                 .optimize = .fast,
                 .preferred_linkage = .static,
@@ -236,11 +404,11 @@ pub fn build(b: *std.Build) !void {
                 .system_include_path = system_include_path.?,
             })
         else
-            b.dependency("sdl", .{
+            b.lazyDependency("sdl", .{
                 .target = target,
                 .optimize = .fast,
                 .preferred_linkage = .static,
-            });
+            })) orelse return;
         const sdl_lib = sdl_dep.artifact("SDL3");
         doom_zig.linkLibrary(sdl_lib);
 
@@ -268,20 +436,7 @@ pub fn build(b: *std.Build) !void {
         sdl_translator.linkLibrary(sdl_lib);
         doom_zig.addImport("sdl", sdl_translator.mod);
 
-        // Translate doomkeys.h (pure macros, no includes) into a `doomkeys`
-        const doomkeys_translator: translate_c.Translator = .init(translate_c_dep, .{
-            .c_source_file = b.path("doom/doomkeys.h"),
-            .target = target,
-            .optimize = optimize,
-        });
-        // interop.zig — shared C-ABI bindings (was src/doom.zig). A standalone
-        // module so main.zig and every Zig port import the SAME instance.
-        const interop_mod = b.createModule(.{
-            .root_source_file = b.path("src/interop.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        interop_mod.addImport("doomkeys", doomkeys_translator.mod);
+        const interop_mod = createInterop(b, translate_c_dep, target, optimize);
         doom_zig.addImport("interop", interop_mod);
 
         // TinySoundFont (music synth): API translated for Zig, implementation
@@ -310,50 +465,10 @@ pub fn build(b: *std.Build) !void {
         options.addOption(u32, "DOOMGENERIC_RESY", resy);
         options.addOption(f32, "DOZIG_MOUSE_SCALE", mouse_scale);
         options.addOption(bool, "DOZIG_FULLSCREEN", fullscreen);
-        const config_mod = options.createModule();
-        doom_zig.addImport("config", config_mod);
+        doom_zig.addImport("config", options.createModule());
 
-        // Force-link each ported module's C-ABI exports. The registry is always
-        // generated (empty body when nothing is ported) so main.zig can import
-        // it unconditionally — same `comptime { _ = @import(...) }` idiom the
-        // audio modules already use.
-        var registry_src: std.ArrayList(u8) = .empty;
-        try registry_src.appendSlice(b.allocator, "comptime {\n");
-        for (ported) |name| {
-            try registry_src.appendSlice(b.allocator, b.fmt("    _ = @import(\"engine_{s}\");\n", .{name}));
-        }
-        try registry_src.appendSlice(b.allocator, "}\n");
-        const registry_mod = b.createModule(.{
-            .root_source_file = b.addWriteFiles().add("engine_registry.zig", registry_src.items),
-            .target = target,
-            .optimize = optimize,
-        });
-        var port_mods = std.StringHashMap(*std.Build.Module).init(b.allocator);
-        for (ported) |name| {
-            const port_mod = b.createModule(.{
-                .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{name})),
-                .target = target,
-                .optimize = optimize,
-                .sanitize_c = .off,
-            });
-            port_mod.addImport("interop", interop_mod);
-            port_mod.addImport("config", config_mod);
-            registry_mod.addImport(b.fmt("engine_{s}", .{name}), port_mod);
-            try port_mods.put(name, port_mod);
-        }
-        // Port-to-port deps: a port that imports another port's Zig API.
-        const port_deps = [_]struct { consumer: []const u8, dep: []const u8 }{
-            .{ .consumer = "f_wipe", .dep = "m_random" },
-        };
-        for (port_deps) |pd| {
-            if (port_mods.get(pd.consumer)) |consumer_mod| {
-                if (port_mods.get(pd.dep)) |dep_mod| consumer_mod.addImport(pd.dep, dep_mod);
-            }
-        }
-        doom_zig.addImport("engine_registry", registry_mod);
+        try addPorts(b, doom_zig, interop_mod, sdl_engine);
     }
-
-    const run_step = b.step("run", "Run the app");
 
     if (web) {
         // Zig cannot link Emscripten output itself: build a static library and let emcc do the
@@ -450,30 +565,5 @@ pub fn build(b: *std.Build) !void {
         run_cmd.addPassthruArgs();
 
         run_step.dependOn(&run_cmd.step);
-    }
-
-    // `zig build test` — unit tests for the Zig engine ports.
-    const test_step = b.step("test", "Run engine port unit tests");
-    const TestPort = struct { name: []const u8, deps: []const []const u8 };
-    const test_ports = [_]TestPort{
-        .{ .name = "f_wipe", .deps = &.{"m_random"} },
-        .{ .name = "m_fixed", .deps = &.{} },
-        .{ .name = "m_random", .deps = &.{} },
-        .{ .name = "tables", .deps = &.{} },
-    };
-    for (test_ports) |tp| {
-        const tmod = b.createModule(.{
-            .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{tp.name})),
-            .target = target,
-            .optimize = optimize,
-        });
-        for (tp.deps) |dep| {
-            tmod.addImport(dep, b.createModule(.{
-                .root_source_file = b.path(b.fmt("src/engine/{s}.zig", .{dep})),
-                .target = target,
-                .optimize = optimize,
-            }));
-        }
-        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = tmod })).step);
     }
 }

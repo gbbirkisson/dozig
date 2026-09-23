@@ -8,6 +8,9 @@ DOOM to Zig for learning.
 
 ## Run
 
+> [!IMPORTANT]
+> You need `doom1.wad` in the root of the repo to run the game.
+
 ```bash
 # Compile/Run original C version with clang
 $ sudo apt install libsdl2-mixer-dev
@@ -23,6 +26,9 @@ $ zig build -Dcengine run
 
 # Compile/Run ported zig version
 $ zig build run
+
+# Compile/Run terminal version (no input, only demos)
+$ zig build run -Dterminal
 
 # Compile/Run wasm version
 $ embuilder build sysroot
